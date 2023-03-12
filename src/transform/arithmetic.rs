@@ -36,7 +36,7 @@ impl<T> ArithmeticTransform<T> {
             name,
             processor_context: Arc::new(ProcessorContext {
                 processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processor: Mutex::new(None),
+                prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Transform,
             }),
             operator,
@@ -55,22 +55,20 @@ impl<T> Display for ArithmeticTransform<T> {
 }
 
 // To make it simple.. Just implement i32 data type...
-impl Processor for ArithmeticTransform<i32>
-{
+impl Processor for ArithmeticTransform<i32> {
     fn name(&self) -> &'static str {
         self.name
     }
 
-    fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
-        self.input = input.output_port();
-        self.processor_context().set_prev_processor(input);
+    fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
+        assert_eq!(input.len(), 1);
+        self.input = input[0].output_port();
+        self.processor_context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
-        let prev_processor = self
-            .processor_context()
-            .get_prev_processor()
-            .expect("Transform should have a previous processor");
+        assert_eq!(self.processor_context().get_prev_processors().len(), 1);
+
         let mut input = self.input.lock().unwrap();
         let mut output = self.output.lock().unwrap();
 
@@ -85,7 +83,7 @@ impl Processor for ArithmeticTransform<i32>
                         let value = self.value;
                         let result = match self.operator {
                             Operator::Add => x.map(|x| x + value),
-                            Operator::Subtract => x.map(|x| x + value ),
+                            Operator::Subtract => x.map(|x| x + value),
                             Operator::Multiply => x.map(|x| x * value),
                             Operator::Divide => x.map(|x| x / value),
                         };
@@ -110,6 +108,7 @@ impl Processor for ArithmeticTransform<i32>
         }
 
         // try to set the processor state to finished
+        let prev_processor = &self.processor_context().get_prev_processors()[0];
         if prev_processor.processor_context().get_processor_state() == ProcessorState::Finished {
             self.processor_context()
                 .set_processor_state(ProcessorState::Finished);

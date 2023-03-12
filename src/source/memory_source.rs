@@ -27,7 +27,7 @@ impl MemorySource {
         MemorySource {
             processor_context: Arc::new(ProcessorContext {
                 processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processor: Mutex::new(None),
+                prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Source,
             }),
             data,
@@ -42,7 +42,7 @@ impl Processor for MemorySource {
         "MemorySource"
     }
 
-    fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
+    fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         panic!("MemorySource should not have input")
     }
 
@@ -53,7 +53,8 @@ impl Processor for MemorySource {
             self.index += 1;
         }
         if self.index == self.data.len() {
-            self.processor_context().set_processor_state(ProcessorState::Finished);
+            self.processor_context()
+                .set_processor_state(ProcessorState::Finished);
         }
         Ok(())
     }

@@ -8,9 +8,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::processor::MergeProcessor;
 use crate::processor::Processor;
 use crate::processor::ProcessorState;
+use crate::transform::MergeProcessor;
 use crate::Result;
 use arrow::record_batch::RecordBatch;
 use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
@@ -57,7 +57,9 @@ impl Pipeline {
         processor
             .processor_context()
             .set_processor_state(ProcessorState::Ready);
+
         let index = self.add_processor(processor);
+
         if self.pipe_ids.is_empty() {
             self.pipe_ids.push(vec![index]);
         } else {
@@ -80,7 +82,12 @@ impl Pipeline {
         let last_ids = self.pipe_ids.last().unwrap().clone();
         let mut transform_ids = vec![];
         for pipe_id in last_ids {
-            let processor = f();
+            let mut processor = f();
+            unsafe {
+                let x = Arc::get_mut_unchecked(&mut processor);
+                x.connect_from_input(vec![self.graph.node_weight(pipe_id).unwrap().clone()]);
+            }
+
             let index = self.add_processor(processor);
             self.connect_processors(pipe_id, index);
             transform_ids.push(index);
@@ -101,10 +108,18 @@ impl Pipeline {
         assert!(!self.pipe_ids.is_empty());
 
         let last_ids = self.pipe_ids.last().unwrap().clone();
-        let merge_processor = Arc::new(MergeProcessor::new("merge_processor", vec![]));
-        let merge_processor_index = self.add_processor(merge_processor);
+        let mut merge_processor = Arc::new(MergeProcessor::new("merge_processor"));
+
+        let merge_processor_index = self.add_processor(merge_processor.clone());
+        let mut prev_processors = vec![];
         for index in last_ids {
             self.connect_processors(index, merge_processor_index);
+            prev_processors.push(self.graph.node_weight(index).unwrap().clone());
+        }
+
+        unsafe {
+            let merge_processor = Arc::get_mut_unchecked(&mut merge_processor);
+            merge_processor.connect_from_input(prev_processors);
         }
     }
 
@@ -122,25 +137,25 @@ impl Pipeline {
         let nodes_indexes = self.graph.node_indices().collect::<Vec<_>>();
         loop {
             // get the tasks that are ready to execute, we could avoid the scan of the graph
-            let ready_nodes = self.ready_nodes.lock().unwrap();
-            for node in ready_nodes.iter() {
-                let mut processor = self.graph.node_weight_mut(*node).unwrap();
-                unsafe {
-                    let x = Arc::get_mut_unchecked(&mut processor);
-                    x.execute()?;
-                }
-            }
+            // let ready_nodes = self.ready_nodes.lock().unwrap();
+            // for node in ready_nodes.iter() {
+            //     let mut processor = self.graph.node_weight_mut(*node).unwrap();
+            //     unsafe {
+            //         let x = Arc::get_mut_unchecked(&mut processor);
+            //         x.execute()?;
+            //     }
+            // }
 
             // or we need to traverse the graph to find the ready nodes
             // FIXME: we should find a more efficient way to find the ready nodes
-            let mut nodes_stpped = 0;
+            let mut nodes_finished = 0;
             for node in &nodes_indexes {
                 let mut processor = self.graph.node_weight_mut(*node).unwrap();
                 match processor.processor_context().get_processor_state() {
-                    ProcessorState::Finished => nodes_stpped += 1,
+                    ProcessorState::Finished => nodes_finished += 1,
                     ProcessorState::Ready => {
                         // TODO(veeupup): run the processor in a thread pool
-                        println!("execute processor: {:?})；", processor);
+                        println!("execute processor: {:?})；", processor.name());
                         unsafe {
                             let x = Arc::get_mut_unchecked(&mut processor);
                             x.execute()?;
@@ -152,15 +167,27 @@ impl Pipeline {
 
             // Now, all the ready nodes are stopped and we should stop the pipeline
             // break;
-            if nodes_stpped == self.graph.node_count() {
+            if nodes_finished == self.graph.node_count() {
                 break;
             }
 
             // sleep and then schedule the next round
             std::thread::sleep(std::time::Duration::from_millis(100));
+            println!("try to schedule");
         }
 
-        Ok(vec![])
+        let last_processor = self
+            .graph
+            .node_weight(*nodes_indexes.last().unwrap())
+            .unwrap();
+        let output = last_processor
+            .output_port()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+
+        Ok(output)
     }
 }
 
@@ -177,9 +204,7 @@ mod tests {
 
     use super::Pipeline;
     use crate::transform::*;
-    use crate::{
-        processor::EmptyProcessor, source::MemorySource, transform::ArithmeticTransform, Result,
-    };
+    use crate::{processor::EmptyProcessor, source::MemorySource, Result};
 
     #[test]
     pub fn test_build_pipeline() {
@@ -224,39 +249,30 @@ mod tests {
             ],
         )?])));
 
-        pipeline.add_transform(|| {
-            Arc::new(ArithmeticTransform::new(
-                "add",
-                Operator::Add,
-                10,
-                0,
-            ))
-        });
+        pipeline.add_transform(|| Arc::new(ArithmeticTransform::new("add", Operator::Add, 10, 0)));
 
         pipeline.merge_processor();
 
-        println!("{:#?}", pipeline);
+        let output = pipeline.execute()?;
 
-        // let output = pipeline.execute()?;
+        let expected_data = vec![
+            RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![11, 12, 13])),
+                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                ],
+            )?,
+            RecordBatch::try_new(
+                schema,
+                vec![
+                    Arc::new(Int32Array::from(vec![110, 120, 130])),
+                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                ],
+            )?,
+        ];
 
-        // let expected_data = vec![
-        //     RecordBatch::try_new(
-        //         schema,
-        //         vec![
-        //             Arc::new(Int32Array::from(vec![11, 12, 13])),
-        //             Arc::new(Int32Array::from(vec![4, 5, 6])),
-        //         ],
-        //     )?,
-        //     RecordBatch::try_new(
-        //         schema,
-        //         vec![
-        //             Arc::new(Int32Array::from(vec![110, 120, 130])),
-        //             Arc::new(Int32Array::from(vec![4, 5, 6])),
-        //         ],
-        //     )?
-        // ];
-
-        // pretty_assertions::assert_eq!(output, vec![expected_data]);
+        pretty_assertions::assert_eq!(output, expected_data);
 
         Ok(())
     }
