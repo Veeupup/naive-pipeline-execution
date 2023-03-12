@@ -8,6 +8,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::graph::Index;
+use crate::graph::RunningGraph;
 use crate::processor::Processor;
 use crate::processor::ProcessorState;
 use crate::transform::MergeProcessor;
@@ -15,14 +17,12 @@ use crate::Result;
 use arrow::record_batch::RecordBatch;
 use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
 
-pub type Index = NodeIndex<DefaultIx>;
-
 #[derive(Debug)]
 pub struct Pipeline {
     // DAG of processors
     // We can build a DAG of processors by adding edges to the graph
     // and then we can traverse the graph to execute the processors
-    graph: StableDiGraph<Arc<dyn Processor>, ()>,
+    graph: Arc<Mutex<RunningGraph>>,
 
     // we will remember each levels pipe id to add transform for each pipe
     pipe_ids: Vec<Vec<Index>>,
@@ -34,18 +34,18 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn new() -> Self {
         Pipeline {
-            graph: StableDiGraph::new(),
+            graph: Arc::new(Mutex::new(RunningGraph::new())),
             pipe_ids: Vec::new(),
             ready_nodes: Arc::new(Mutex::new(vec![])),
         }
     }
 
     fn add_processor(&mut self, processor: Arc<dyn Processor>) -> NodeIndex {
-        self.graph.add_node(processor)
+        self.graph.lock().unwrap().add_processor(processor)
     }
 
     fn connect_processors(&mut self, from: NodeIndex, to: NodeIndex) {
-        self.graph.add_edge(from, to, ());
+        self.graph.lock().unwrap().add_edges(from, to);
     }
 
     pub fn add_source(&mut self, processor: Arc<dyn Processor>) {
@@ -54,9 +54,7 @@ impl Pipeline {
 
         // source processor is always ready to execute
         // this is where we start to execute the pipeline
-        processor
-            .processor_context()
-            .set_processor_state(ProcessorState::Ready);
+        processor.context().set_state(ProcessorState::Ready);
 
         let index = self.add_processor(processor);
 
@@ -85,7 +83,11 @@ impl Pipeline {
             let mut processor = f();
             unsafe {
                 let x = Arc::get_mut_unchecked(&mut processor);
-                x.connect_from_input(vec![self.graph.node_weight(pipe_id).unwrap().clone()]);
+                x.connect_from_input(vec![self
+                    .graph
+                    .lock()
+                    .unwrap()
+                    .get_processor_by_index(pipe_id)]);
             }
 
             let index = self.add_processor(processor);
@@ -114,7 +116,7 @@ impl Pipeline {
         let mut prev_processors = vec![];
         for index in last_ids {
             self.connect_processors(index, merge_processor_index);
-            prev_processors.push(self.graph.node_weight(index).unwrap().clone());
+            prev_processors.push(self.graph.lock().unwrap().get_processor_by_index(index));
         }
 
         unsafe {
@@ -134,12 +136,12 @@ impl Pipeline {
         // if the node state is Ready, execute it
         // if the node state is Running, ignore it
         // if all node state are stopped, stop the pipeline
-        let nodes_indexes = self.graph.node_indices().collect::<Vec<_>>();
+        let mut all_processors = self.graph.lock().unwrap().get_all_processors();
         loop {
             // get the tasks that are ready to execute, we could avoid the scan of the graph
             // let ready_nodes = self.ready_nodes.lock().unwrap();
             // for node in ready_nodes.iter() {
-            //     let mut processor = self.graph.node_weight_mut(*node).unwrap();
+            //     let mut processor = self.graph.lock().unwrap().node_weight_mut(*node).unwrap();
             //     unsafe {
             //         let x = Arc::get_mut_unchecked(&mut processor);
             //         x.execute()?;
@@ -149,25 +151,24 @@ impl Pipeline {
             // or we need to traverse the graph to find the ready nodes
             // FIXME: we should find a more efficient way to find the ready nodes
             let mut nodes_finished = 0;
-            for node in &nodes_indexes {
-                let mut processor = self.graph.node_weight_mut(*node).unwrap();
-                match processor.processor_context().get_processor_state() {
-                    ProcessorState::Finished => nodes_finished += 1,
+            for processor in &mut all_processors {
+                match processor.context().get_state() {
                     ProcessorState::Ready => {
                         // TODO(veeupup): run the processor in a thread pool
                         println!("execute processor: {:?})；", processor.name());
                         unsafe {
-                            let x = Arc::get_mut_unchecked(&mut processor);
+                            let x = Arc::get_mut_unchecked(processor);
                             x.execute()?;
                         }
                     }
                     ProcessorState::Running | ProcessorState::Waiting => {}
+                    ProcessorState::Finished => {}
                 }
             }
 
             // Now, all the ready nodes are stopped and we should stop the pipeline
             // break;
-            if nodes_finished == self.graph.node_count() {
+            if nodes_finished == all_processors.len() {
                 break;
             }
 
@@ -176,10 +177,7 @@ impl Pipeline {
             println!("try to schedule");
         }
 
-        let last_processor = self
-            .graph
-            .node_weight(*nodes_indexes.last().unwrap())
-            .unwrap();
+        let last_processor = self.graph.lock().unwrap().get_last_processor();
         let output = last_processor
             .output_port()
             .lock()

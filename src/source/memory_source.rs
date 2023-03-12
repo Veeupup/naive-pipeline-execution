@@ -10,7 +10,7 @@ use std::{
 
 #[derive(Debug)]
 pub struct MemorySource {
-    pub processor_context: Arc<ProcessorContext>,
+    pub processor_context: Arc<Context>,
     pub data: Vec<RecordBatch>,
     pub index: usize,
     pub output: SharedDataPtr,
@@ -25,7 +25,7 @@ impl Display for MemorySource {
 impl MemorySource {
     pub fn new(data: Vec<RecordBatch>) -> Self {
         MemorySource {
-            processor_context: Arc::new(ProcessorContext {
+            processor_context: Arc::new(Context {
                 processor_state: Mutex::new(ProcessorState::Ready),
                 prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Source,
@@ -53,8 +53,8 @@ impl Processor for MemorySource {
             self.index += 1;
         }
         if self.index == self.data.len() {
-            self.processor_context()
-                .set_processor_state(ProcessorState::Finished);
+            self.context()
+                .set_state(ProcessorState::Finished);
         }
         Ok(())
     }
@@ -63,7 +63,7 @@ impl Processor for MemorySource {
         self.output.clone()
     }
 
-    fn processor_context(&self) -> Arc<ProcessorContext> {
+    fn context(&self) -> Arc<Context> {
         self.processor_context.clone()
     }
 }

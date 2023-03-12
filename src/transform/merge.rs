@@ -1,6 +1,6 @@
 use arrow::record_batch::RecordBatch;
 
-use crate::{pipeline::Index, processor::*, Result};
+use crate::{graph::Index, processor::*, Result};
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -11,7 +11,7 @@ use std::{
 #[derive(Debug)]
 pub struct MergeProcessor {
     name: &'static str,
-    processor_context: Arc<ProcessorContext>,
+    processor_context: Arc<Context>,
     input: Vec<SharedDataPtr>,
     output: SharedDataPtr,
 }
@@ -26,7 +26,7 @@ impl MergeProcessor {
     pub fn new(name: &'static str) -> Self {
         MergeProcessor {
             name,
-            processor_context: Arc::new(ProcessorContext {
+            processor_context: Arc::new(Context {
                 // TODO(veeupup) should be judge by prev processors
                 processor_state: Mutex::new(ProcessorState::Ready),
                 prev_processors: Mutex::new(vec![]),
@@ -39,7 +39,7 @@ impl MergeProcessor {
 
     pub fn output(&self) -> Result<Vec<RecordBatch>> {
         assert_eq!(
-            self.processor_context().get_processor_state(),
+            self.context().get_state(),
             ProcessorState::Finished
         );
         Ok(self.output.lock().unwrap().drain(..).collect())
@@ -53,15 +53,15 @@ impl Processor for MergeProcessor {
 
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         self.input = input.iter().map(|x| x.output_port()).collect::<Vec<_>>();
-        self.processor_context().set_prev_processors(input);
+        self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
         // check if all prev processors are finished
-        let prev_processors = self.processor_context().get_prev_processors();
+        let prev_processors = self.context().get_prev_processors();
         let finished = prev_processors
             .iter()
-            .all(|x| x.processor_context().get_processor_state() == ProcessorState::Finished);
+            .all(|x| x.context().get_state() == ProcessorState::Finished);
 
         if !finished {
             return Ok(());
@@ -76,8 +76,8 @@ impl Processor for MergeProcessor {
         }
 
         // set state to finished
-        self.processor_context()
-            .set_processor_state(ProcessorState::Finished);
+        self.context()
+            .set_state(ProcessorState::Finished);
 
         Ok(())
     }
@@ -86,7 +86,7 @@ impl Processor for MergeProcessor {
         self.output.clone()
     }
 
-    fn processor_context(&self) -> Arc<ProcessorContext> {
+    fn context(&self) -> Arc<Context> {
         self.processor_context.clone()
     }
 }

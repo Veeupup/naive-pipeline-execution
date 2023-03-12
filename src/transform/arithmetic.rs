@@ -22,7 +22,7 @@ pub enum Operator {
 #[derive(Debug)]
 pub struct ArithmeticTransform<T> {
     name: &'static str,
-    processor_context: Arc<ProcessorContext>,
+    processor_context: Arc<Context>,
     operator: Operator,
     value: T,
     column_index: usize,
@@ -34,8 +34,8 @@ impl<T> ArithmeticTransform<T> {
     pub fn new(name: &'static str, operator: Operator, value: T, column_index: usize) -> Self {
         ArithmeticTransform {
             name,
-            processor_context: Arc::new(ProcessorContext {
-                processor_state: Mutex::new(ProcessorState::Ready),
+            processor_context: Arc::new(Context {
+                processor_state: Mutex::new(ProcessorState::Waiting),
                 prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Transform,
             }),
@@ -63,11 +63,11 @@ impl Processor for ArithmeticTransform<i32> {
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         assert_eq!(input.len(), 1);
         self.input = input[0].output_port();
-        self.processor_context().set_prev_processors(input);
+        self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
-        assert_eq!(self.processor_context().get_prev_processors().len(), 1);
+        assert_eq!(self.context().get_prev_processors().len(), 1);
 
         let mut input = self.input.lock().unwrap();
         let mut output = self.output.lock().unwrap();
@@ -108,10 +108,10 @@ impl Processor for ArithmeticTransform<i32> {
         }
 
         // try to set the processor state to finished
-        let prev_processor = &self.processor_context().get_prev_processors()[0];
-        if prev_processor.processor_context().get_processor_state() == ProcessorState::Finished {
-            self.processor_context()
-                .set_processor_state(ProcessorState::Finished);
+        let prev_processor = &self.context().get_prev_processors()[0];
+        if prev_processor.context().get_state() == ProcessorState::Finished {
+            self.context()
+                .set_state(ProcessorState::Finished);
         }
 
         Ok(())
@@ -121,7 +121,7 @@ impl Processor for ArithmeticTransform<i32> {
         self.output.clone()
     }
 
-    fn processor_context(&self) -> Arc<ProcessorContext> {
+    fn context(&self) -> Arc<Context> {
         self.processor_context.clone()
     }
 }

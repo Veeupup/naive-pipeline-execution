@@ -1,6 +1,6 @@
 use arrow::record_batch::RecordBatch;
 
-use crate::{pipeline::Index, Result};
+use crate::{graph::Index, Result};
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -26,27 +26,28 @@ pub enum ProcessorState {
 }
 
 #[derive(Debug)]
-pub struct ProcessorContext {
+pub struct Context {
     pub processor_state: Mutex<ProcessorState>,
     pub prev_processors: Mutex<Vec<Arc<dyn Processor>>>,
     pub processor_type: ProcessorType,
+    // pub node_index: Index,
 }
 
-impl ProcessorContext {
+impl Context {
     pub fn new(processor_type: ProcessorType) -> Self {
-        ProcessorContext {
+        Context {
             processor_state: Mutex::new(ProcessorState::Waiting),
             prev_processors: Mutex::new(vec![]),
             processor_type,
         }
     }
 
-    pub fn set_processor_state(&self, state: ProcessorState) {
+    pub fn set_state(&self, state: ProcessorState) {
         let mut processor_state = self.processor_state.lock().unwrap();
         *processor_state = state;
     }
 
-    pub fn get_processor_state(&self) -> ProcessorState {
+    pub fn get_state(&self) -> ProcessorState {
         let processor_state = self.processor_state.lock().unwrap();
         *processor_state
     }
@@ -71,13 +72,13 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 
     fn output_port(&self) -> SharedDataPtr;
 
-    fn processor_context(&self) -> Arc<ProcessorContext>;
+    fn context(&self) -> Arc<Context>;
 }
 
 #[derive(Debug)]
 pub struct EmptyProcessor {
     name: &'static str,
-    processor_context: Arc<ProcessorContext>,
+    processor_context: Arc<Context>,
     output: SharedDataPtr,
 }
 
@@ -91,7 +92,7 @@ impl EmptyProcessor {
     pub fn new(name: &'static str) -> Self {
         EmptyProcessor {
             name,
-            processor_context: Arc::new(ProcessorContext {
+            processor_context: Arc::new(Context {
                 processor_state: Mutex::new(ProcessorState::Ready),
                 prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Source,
@@ -107,7 +108,7 @@ impl Processor for EmptyProcessor {
     }
 
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
-        self.processor_context().set_prev_processors(input);
+        self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
@@ -118,7 +119,7 @@ impl Processor for EmptyProcessor {
         self.output.clone()
     }
 
-    fn processor_context(&self) -> Arc<ProcessorContext> {
+    fn context(&self) -> Arc<Context> {
         self.processor_context.clone()
     }
 }
