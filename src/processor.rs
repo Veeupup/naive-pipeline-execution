@@ -1,6 +1,7 @@
 use crate::Result;
 use std::{
     fmt::Display,
+    ops::DerefMut,
     sync::{Arc, Mutex},
 };
 
@@ -61,7 +62,7 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 
     fn connect_from_input(&mut self, input: Arc<dyn Processor>);
 
-    fn execute(&self) -> Result<()>;
+    fn execute(&mut self) -> Result<()>;
 
     fn processor_context(&self) -> Arc<ProcessorContext>;
 }
@@ -100,7 +101,7 @@ impl Processor for EmptyProcessor {
         self.processor_context().set_prev_processor(input);
     }
 
-    fn execute(&self) -> Result<()> {
+    fn execute(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -143,7 +144,7 @@ impl Processor for MergeProcessor {
         self.processor_context().set_prev_processor(input);
     }
 
-    fn execute(&self) -> Result<()> {
+    fn execute(&mut self) -> Result<()> {
         Ok(())
     }
 

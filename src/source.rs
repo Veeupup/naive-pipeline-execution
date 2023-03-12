@@ -1,58 +1,53 @@
-// use crate::processor::*;
-// use crate::Result;
-// use std::{sync::{Arc, Mutex}, fmt::Display};
+use arrow::record_batch::RecordBatch;
 
-// #[derive(Debug)]
-// pub struct MemorySource {
-//     name: &'static str,
-//     processor_type: ProcessorType,
-//     processor_state: Mutex<ProcessorState>,
-//     prev_processor: Option<Arc<dyn Processor>>,
-// }
+use crate::processor::*;
+use crate::Result;
+use std::{
+    fmt::Display,
+    sync::{Arc, Mutex},
+};
 
-// impl Display for MemorySource {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "MemorySource [name: {}]", self.name)
-//     }
-// }
+#[derive(Debug)]
+pub struct MemorySource {
+    pub processor_context: Arc<ProcessorContext>,
+    pub data: Vec<RecordBatch>,
+    pub index: usize,
+}
 
-// impl MemorySource {
-//     pub fn new(name: &'static str) -> Self {
-//         MemorySource {
-//             name,
-//             processor_type: ProcessorType::Transform,
-//             processor_state: Mutex::new(ProcessorState::Ready),
-//             prev_processor: None,
-//         }
-//     }
-// }
+impl Display for MemorySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MemorySource")
+    }
+}
 
-// impl Processor for MemorySource {
-//     fn name(&self) -> &'static str {
-//         self.name
-//     }
+impl MemorySource {
+    pub fn new(data: Vec<RecordBatch>) -> Self {
+        MemorySource {
+            processor_context: Arc::new(ProcessorContext {
+                processor_state: Mutex::new(ProcessorState::Ready),
+                prev_processor: Mutex::new(None),
+                processor_type: ProcessorType::Source,
+            }),
+            data,
+            index: 0,
+        }
+    }
+}
 
-//     fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
-//         self.prev_processor = Some(input);
-//     }
+impl Processor for MemorySource {
+    fn name(&self) -> &'static str {
+        "MemorySource"
+    }
 
-//     fn execute(&self) -> Result<()> {
-//         Ok(())
-//     }
+    fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
+        panic!("MemorySource should not have input")
+    }
 
-//     fn processor_type(&self) -> ProcessorType {
-//         self.processor_type
-//     }
+    fn execute(&mut self) -> Result<()> {
+        Ok(())
+    }
 
-//     fn processor_state(&self) -> ProcessorState {
-//         self.processor_state.lock().unwrap().clone()
-//     }
-
-//     fn set_processor_state(&self, state: ProcessorState) {
-//         *self.processor_state.lock().unwrap() = state;
-//     }
-
-//     fn prev_processor(&self) -> Option<Arc<dyn Processor>> {
-//         self.prev_processor.clone()
-//     }
-// }
+    fn processor_context(&self) -> Arc<ProcessorContext> {
+        self.processor_context.clone()
+    }
+}

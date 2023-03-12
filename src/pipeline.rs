@@ -6,6 +6,8 @@
  * And this is just a toy project to implemeent a data processing pipeline
  */
 
+use std::borrow::BorrowMut;
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use crate::processor::MergeProcessor;
@@ -21,7 +23,7 @@ pub struct Pipeline {
     // DAG of processors
     // We can build a DAG of processors by adding edges to the graph
     // and then we can traverse the graph to execute the processors
-    graph: StableDiGraph<Arc<dyn Processor>, i32>,
+    graph: StableDiGraph<Arc<dyn Processor>, ()>,
 
     // we will remember each levels pipe id to add transform for each pipe
     pipe_ids: Vec<Vec<Index>>,
@@ -44,7 +46,7 @@ impl Pipeline {
     }
 
     fn connect_processors(&mut self, from: NodeIndex, to: NodeIndex) {
-        self.graph.add_edge(from, to, 0);
+        self.graph.add_edge(from, to, ());
     }
 
     pub fn add_source(&mut self, processor: Arc<dyn Processor>) {
@@ -111,32 +113,50 @@ impl Pipeline {
         todo!()
     }
 
-    pub fn execute(&self) -> Result<()> {
+    pub fn execute(&mut self) -> Result<()> {
         // traverse the graph and execute the processors
         // if the node state is Ready, execute it
         // if the node state is Running, ignore it
         // if all node state are stopped, stop the pipeline
+        let nodes_indexes = self.graph.node_indices().collect::<Vec<_>>();
         loop {
             // get the tasks that are ready to execute, we could avoid the scan of the graph
             let ready_nodes = self.ready_nodes.lock().unwrap();
             for node in ready_nodes.iter() {
-                let processor = self.graph.node_weight(*node).unwrap();
-                processor.execute();
+                let mut processor = self.graph.node_weight_mut(*node).unwrap();
+                unsafe {
+                    let x = Arc::get_mut_unchecked(&mut processor);
+                    x.execute()?;
+                }
             }
 
             // or we need to traverse the graph to find the ready nodes
             // FIXME: we should find a more efficient way to find the ready nodes
-            for node in self.graph.node_indices() {
-                let processor = self.graph.node_weight(node).unwrap();
-                if processor.processor_context().get_processor_state() == ProcessorState::Ready {
-                    // TODO(veeupup): run the processor in a thread pool
-                    processor.execute()?;
+            let mut nodes_stpped = 0;
+            for node in &nodes_indexes {
+                let mut processor = self.graph.node_weight_mut(*node).unwrap();
+                match processor.processor_context().get_processor_state() {
+                    ProcessorState::Stopped => nodes_stpped += 1,
+                    ProcessorState::Ready => {
+                        // TODO(veeupup): run the processor in a thread pool
+                        println!("execute processor: {:?})；", processor);
+                        unsafe {
+                            let x = Arc::get_mut_unchecked(&mut processor);
+                            x.execute()?;
+                        }
+                    }
+                    ProcessorState::Running | ProcessorState::Waiting => {}
                 }
-                break;
             }
 
             // Now, all the ready nodes are stopped and we should stop the pipeline
-            break;
+            // break;
+            if nodes_stpped == self.graph.node_count() {
+                break;
+            }
+
+            // sleep and then schedule the next round
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         Ok(())
     }
@@ -166,6 +186,6 @@ mod tests {
 
         println!("{:#?}", pipeline.graph);
 
-        println!("{}", Dot::new(&pipeline.graph));
+        println!("{:?}", Dot::new(&pipeline.graph));
     }
 }

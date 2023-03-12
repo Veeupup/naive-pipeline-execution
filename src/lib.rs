@@ -1,3 +1,4 @@
+#![feature(get_mut_unchecked)]
 mod error;
 mod pipeline;
 mod processor;
