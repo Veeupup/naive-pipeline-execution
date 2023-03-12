@@ -162,7 +162,7 @@ impl Pipeline {
                         }
                     }
                     ProcessorState::Running | ProcessorState::Waiting => {}
-                    ProcessorState::Finished => {}
+                    ProcessorState::Finished => nodes_finished += 1,
                 }
             }
 
@@ -219,7 +219,7 @@ mod tests {
 
         println!("{:#?}", pipeline.graph);
 
-        println!("{:?}", Dot::new(&pipeline.graph));
+        // println!("{:?}", Dot::new(&pipeline.graph.lock().unwrap()));
     }
 
     #[test]

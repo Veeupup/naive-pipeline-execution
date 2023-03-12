@@ -35,7 +35,7 @@ impl<T> ArithmeticTransform<T> {
         ArithmeticTransform {
             name,
             processor_context: Arc::new(Context {
-                processor_state: Mutex::new(ProcessorState::Waiting),
+                processor_state: Mutex::new(ProcessorState::Ready),
                 prev_processors: Mutex::new(vec![]),
                 processor_type: ProcessorType::Transform,
             }),
