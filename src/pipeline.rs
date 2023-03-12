@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use crate::processor::MergeProcessor;
 use crate::processor::Processor;
 use crate::processor::ProcessorState;
+use crate::Result;
 use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
 
 pub type Index = NodeIndex<DefaultIx>;
@@ -52,7 +53,9 @@ impl Pipeline {
 
         // source processor is always ready to execute
         // this is where we start to execute the pipeline
-        processor.set_processor_state(ProcessorState::Ready);
+        processor
+            .processor_context()
+            .set_processor_state(ProcessorState::Ready);
         let index = self.add_processor(processor);
         if self.pipe_ids.is_empty() {
             self.pipe_ids.push(vec![index]);
@@ -100,7 +103,6 @@ impl Pipeline {
         let merge_processor = Arc::new(MergeProcessor::new("merge_processor"));
         let merge_processor_index = self.add_processor(merge_processor);
         for index in last_ids {
-            let processor = self.graph.node_weight(index).unwrap();
             self.connect_processors(index, merge_processor_index);
         }
     }
@@ -109,14 +111,14 @@ impl Pipeline {
         todo!()
     }
 
-    pub fn execute(&self) {
+    pub fn execute(&self) -> Result<()> {
         // traverse the graph and execute the processors
         // if the node state is Ready, execute it
         // if the node state is Running, ignore it
         // if all node state are stopped, stop the pipeline
         loop {
             // get the tasks that are ready to execute, we could avoid the scan of the graph
-            let mut ready_nodes = self.ready_nodes.lock().unwrap();
+            let ready_nodes = self.ready_nodes.lock().unwrap();
             for node in ready_nodes.iter() {
                 let processor = self.graph.node_weight(*node).unwrap();
                 processor.execute();
@@ -126,9 +128,9 @@ impl Pipeline {
             // FIXME: we should find a more efficient way to find the ready nodes
             for node in self.graph.node_indices() {
                 let processor = self.graph.node_weight(node).unwrap();
-                if processor.processor_state() == ProcessorState::Ready {
+                if processor.processor_context().get_processor_state() == ProcessorState::Ready {
                     // TODO(veeupup): run the processor in a thread pool
-                    processor.execute();
+                    processor.execute()?;
                 }
                 break;
             }
@@ -136,6 +138,7 @@ impl Pipeline {
             // Now, all the ready nodes are stopped and we should stop the pipeline
             break;
         }
+        Ok(())
     }
 }
 

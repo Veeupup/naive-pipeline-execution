@@ -1,5 +1,8 @@
 use crate::Result;
-use std::{sync::{Arc, Mutex}, fmt::Display};
+use std::{
+    fmt::Display,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ProcessorType {
@@ -10,9 +13,47 @@ pub enum ProcessorType {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProcessorState {
-    Ready,
-    Running,
-    Stopped,
+    Ready,   // can be scheduled
+    Waiting, // waiting for upstream processor to finish
+    Running, // is running
+    Stopped, // will no longer be scheduled
+}
+
+#[derive(Debug)]
+pub struct ProcessorContext {
+    pub processor_state: Mutex<ProcessorState>,
+    pub prev_processor: Mutex<Option<Arc<dyn Processor>>>,
+    pub processor_type: ProcessorType,
+}
+
+impl ProcessorContext {
+    pub fn new(processor_type: ProcessorType) -> Self {
+        ProcessorContext {
+            processor_state: Mutex::new(ProcessorState::Waiting),
+            prev_processor: Mutex::new(None),
+            processor_type,
+        }
+    }
+
+    pub fn set_processor_state(&self, state: ProcessorState) {
+        let mut processor_state = self.processor_state.lock().unwrap();
+        *processor_state = state;
+    }
+
+    pub fn set_prev_processor(&self, processor: Arc<dyn Processor>) {
+        let mut prev_processor = self.prev_processor.lock().unwrap();
+        *prev_processor = Some(processor);
+    }
+
+    pub fn get_prev_processor(&self) -> Option<Arc<dyn Processor>> {
+        let prev_processor = self.prev_processor.lock().unwrap();
+        prev_processor.clone()
+    }
+
+    pub fn get_processor_state(&self) -> ProcessorState {
+        let processor_state = self.processor_state.lock().unwrap();
+        *processor_state
+    }
 }
 
 pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
@@ -20,27 +61,15 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 
     fn connect_from_input(&mut self, input: Arc<dyn Processor>);
 
-    // just execute the processor
     fn execute(&self) -> Result<()>;
 
-    fn processor_type(&self) -> ProcessorType;
-
-    // judge whether the processor is ready to execute
-    fn processor_state(&self) -> ProcessorState;
-
-    // set the processor state
-    fn set_processor_state(&self, state: ProcessorState);
-
-    // get the prev processor of the current processor
-    fn prev_processor(&self) -> Option<Arc<dyn Processor>>;
+    fn processor_context(&self) -> Arc<ProcessorContext>;
 }
 
 #[derive(Debug)]
 pub struct EmptyProcessor {
     name: &'static str,
-    processor_type: ProcessorType,
-    processor_state: Mutex<ProcessorState>,
-    prev_processor: Option<Arc<dyn Processor>>,
+    processor_context: Arc<ProcessorContext>,
 }
 
 impl Display for EmptyProcessor {
@@ -53,9 +82,11 @@ impl EmptyProcessor {
     pub fn new(name: &'static str) -> Self {
         EmptyProcessor {
             name,
-            processor_type: ProcessorType::Transform,
-            processor_state: Mutex::new(ProcessorState::Ready),
-            prev_processor: None,
+            processor_context: Arc::new(ProcessorContext {
+                processor_state: Mutex::new(ProcessorState::Ready),
+                prev_processor: Mutex::new(None),
+                processor_type: ProcessorType::Source,
+            }),
         }
     }
 }
@@ -66,36 +97,22 @@ impl Processor for EmptyProcessor {
     }
 
     fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
-        self.prev_processor = Some(input);
+        self.processor_context().set_prev_processor(input);
     }
 
     fn execute(&self) -> Result<()> {
         Ok(())
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        self.processor_type
-    }
-
-    fn processor_state(&self) -> ProcessorState {
-        self.processor_state.lock().unwrap().clone()
-    }
-
-    fn set_processor_state(&self, state: ProcessorState) {
-        *self.processor_state.lock().unwrap() = state;
-    }
-
-    fn prev_processor(&self) -> Option<Arc<dyn Processor>> {
-        self.prev_processor.clone()
+    fn processor_context(&self) -> Arc<ProcessorContext> {
+        self.processor_context.clone()
     }
 }
 
 #[derive(Debug)]
 pub struct MergeProcessor {
     name: &'static str,
-    processor_type: ProcessorType,
-    processor_state: Mutex<ProcessorState>,
-    prev_processor: Option<Arc<dyn Processor>>,
+    processor_context: Arc<ProcessorContext>,
 }
 
 impl Display for MergeProcessor {
@@ -108,9 +125,11 @@ impl MergeProcessor {
     pub fn new(name: &'static str) -> Self {
         MergeProcessor {
             name,
-            processor_type: ProcessorType::Transform,
-            processor_state: Mutex::new(ProcessorState::Ready),
-            prev_processor: None,
+            processor_context: Arc::new(ProcessorContext {
+                processor_state: Mutex::new(ProcessorState::Waiting),
+                prev_processor: Mutex::new(None),
+                processor_type: ProcessorType::Transform,
+            }),
         }
     }
 }
@@ -121,26 +140,14 @@ impl Processor for MergeProcessor {
     }
 
     fn connect_from_input(&mut self, input: Arc<dyn Processor>) {
-        self.prev_processor = Some(input);
+        self.processor_context().set_prev_processor(input);
     }
 
     fn execute(&self) -> Result<()> {
         Ok(())
     }
 
-    fn processor_type(&self) -> ProcessorType {
-        self.processor_type
-    }
-
-    fn processor_state(&self) -> ProcessorState {
-        self.processor_state.lock().unwrap().clone()
-    }
-
-    fn set_processor_state(&self, state: ProcessorState) {
-        *self.processor_state.lock().unwrap() = state;
-    }
-
-    fn prev_processor(&self) -> Option<Arc<dyn Processor>> {
-        self.prev_processor.clone()
+    fn processor_context(&self) -> Arc<ProcessorContext> {
+        self.processor_context.clone()
     }
 }
