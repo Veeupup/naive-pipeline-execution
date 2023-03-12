@@ -1,9 +1,14 @@
-use crate::Result;
+use arrow::record_batch::RecordBatch;
+
+use crate::{pipeline::Index, Result};
 use std::{
+    collections::VecDeque,
     fmt::Display,
-    ops::DerefMut,
     sync::{Arc, Mutex},
 };
+
+pub type SharedData = Mutex<VecDeque<RecordBatch>>;
+pub type SharedDataPtr = Arc<SharedData>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ProcessorType {
@@ -14,10 +19,10 @@ pub enum ProcessorType {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProcessorState {
-    Ready,   // can be scheduled
-    Waiting, // waiting for upstream processor to finish
-    Running, // is running
-    Stopped, // will no longer be scheduled
+    Ready,    // can be scheduled
+    Waiting,  // waiting for upstream processor to finish
+    Running,  // is running
+    Finished, // will no longer be scheduled
 }
 
 #[derive(Debug)]
@@ -64,6 +69,8 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 
     fn execute(&mut self) -> Result<()>;
 
+    fn output_port(&self) -> SharedDataPtr;
+
     fn processor_context(&self) -> Arc<ProcessorContext>;
 }
 
@@ -71,6 +78,7 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 pub struct EmptyProcessor {
     name: &'static str,
     processor_context: Arc<ProcessorContext>,
+    output: SharedDataPtr,
 }
 
 impl Display for EmptyProcessor {
@@ -88,6 +96,7 @@ impl EmptyProcessor {
                 prev_processor: Mutex::new(None),
                 processor_type: ProcessorType::Source,
             }),
+            output: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 }
@@ -105,15 +114,22 @@ impl Processor for EmptyProcessor {
         Ok(())
     }
 
+    fn output_port(&self) -> SharedDataPtr {
+        self.output.clone()
+    }
+
     fn processor_context(&self) -> Arc<ProcessorContext> {
         self.processor_context.clone()
     }
 }
 
+// MergeProcessor is pipeline breaker
 #[derive(Debug)]
 pub struct MergeProcessor {
     name: &'static str,
     processor_context: Arc<ProcessorContext>,
+    input: Vec<SharedDataPtr>,
+    output: SharedDataPtr,
 }
 
 impl Display for MergeProcessor {
@@ -123,7 +139,7 @@ impl Display for MergeProcessor {
 }
 
 impl MergeProcessor {
-    pub fn new(name: &'static str) -> Self {
+    pub fn new(name: &'static str, input: Vec<SharedDataPtr>) -> Self {
         MergeProcessor {
             name,
             processor_context: Arc::new(ProcessorContext {
@@ -131,7 +147,17 @@ impl MergeProcessor {
                 prev_processor: Mutex::new(None),
                 processor_type: ProcessorType::Transform,
             }),
+            input,
+            output: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+
+    pub fn output(&self) -> Result<Vec<RecordBatch>> {
+        assert_eq!(
+            self.processor_context().get_processor_state(),
+            ProcessorState::Finished
+        );
+        Ok(self.output.lock().unwrap().drain(..).collect())
     }
 }
 
@@ -145,7 +171,13 @@ impl Processor for MergeProcessor {
     }
 
     fn execute(&mut self) -> Result<()> {
+        // wait every prev processors is
+
         Ok(())
+    }
+
+    fn output_port(&self) -> SharedDataPtr {
+        self.output.clone()
     }
 
     fn processor_context(&self) -> Arc<ProcessorContext> {

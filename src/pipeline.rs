@@ -6,14 +6,13 @@
  * And this is just a toy project to implemeent a data processing pipeline
  */
 
-use std::borrow::BorrowMut;
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use crate::processor::MergeProcessor;
 use crate::processor::Processor;
 use crate::processor::ProcessorState;
 use crate::Result;
+use arrow::record_batch::RecordBatch;
 use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
 
 pub type Index = NodeIndex<DefaultIx>;
@@ -102,7 +101,7 @@ impl Pipeline {
         assert!(!self.pipe_ids.is_empty());
 
         let last_ids = self.pipe_ids.last().unwrap().clone();
-        let merge_processor = Arc::new(MergeProcessor::new("merge_processor"));
+        let merge_processor = Arc::new(MergeProcessor::new("merge_processor", vec![]));
         let merge_processor_index = self.add_processor(merge_processor);
         for index in last_ids {
             self.connect_processors(index, merge_processor_index);
@@ -113,7 +112,9 @@ impl Pipeline {
         todo!()
     }
 
-    pub fn execute(&mut self) -> Result<()> {
+    pub fn execute(&mut self) -> Result<Vec<RecordBatch>> {
+        // check the graph is valid
+
         // traverse the graph and execute the processors
         // if the node state is Ready, execute it
         // if the node state is Running, ignore it
@@ -136,7 +137,7 @@ impl Pipeline {
             for node in &nodes_indexes {
                 let mut processor = self.graph.node_weight_mut(*node).unwrap();
                 match processor.processor_context().get_processor_state() {
-                    ProcessorState::Stopped => nodes_stpped += 1,
+                    ProcessorState::Finished => nodes_stpped += 1,
                     ProcessorState::Ready => {
                         // TODO(veeupup): run the processor in a thread pool
                         println!("execute processor: {:?})；", processor);
@@ -158,7 +159,8 @@ impl Pipeline {
             // sleep and then schedule the next round
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        Ok(())
+
+        Ok(vec![])
     }
 }
 
@@ -166,10 +168,18 @@ impl Pipeline {
 mod tests {
     use std::sync::Arc;
 
+    use arrow::array::Int32Array;
+    use arrow::{
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    };
     use petgraph::dot::Dot;
 
     use super::Pipeline;
-    use crate::processor::EmptyProcessor;
+    use crate::transform::*;
+    use crate::{
+        processor::EmptyProcessor, source::MemorySource, transform::ArithmeticTransform, Result,
+    };
 
     #[test]
     pub fn test_build_pipeline() {
@@ -187,5 +197,67 @@ mod tests {
         println!("{:#?}", pipeline.graph);
 
         println!("{:?}", Dot::new(&pipeline.graph));
+    }
+
+    #[test]
+    pub fn test_execute_pipeline() -> Result<()> {
+        let mut pipeline = Pipeline::new();
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+        ]));
+
+        pipeline.add_source(Arc::new(MemorySource::new(vec![RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![1, 2, 3])),
+                Arc::new(Int32Array::from(vec![4, 5, 6])),
+            ],
+        )?])));
+
+        pipeline.add_source(Arc::new(MemorySource::new(vec![RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int32Array::from(vec![100, 110, 120])),
+                Arc::new(Int32Array::from(vec![4, 5, 6])),
+            ],
+        )?])));
+
+        pipeline.add_transform(|| {
+            Arc::new(ArithmeticTransform::new(
+                "add",
+                Operator::Add,
+                10,
+                0,
+            ))
+        });
+
+        pipeline.merge_processor();
+
+        println!("{:#?}", pipeline);
+
+        // let output = pipeline.execute()?;
+
+        // let expected_data = vec![
+        //     RecordBatch::try_new(
+        //         schema,
+        //         vec![
+        //             Arc::new(Int32Array::from(vec![11, 12, 13])),
+        //             Arc::new(Int32Array::from(vec![4, 5, 6])),
+        //         ],
+        //     )?,
+        //     RecordBatch::try_new(
+        //         schema,
+        //         vec![
+        //             Arc::new(Int32Array::from(vec![110, 120, 130])),
+        //             Arc::new(Int32Array::from(vec![4, 5, 6])),
+        //         ],
+        //     )?
+        // ];
+
+        // pretty_assertions::assert_eq!(output, vec![expected_data]);
+
+        Ok(())
     }
 }

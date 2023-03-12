@@ -2,6 +2,7 @@ use arrow::record_batch::RecordBatch;
 
 use crate::processor::*;
 use crate::Result;
+use std::collections::VecDeque;
 use std::{
     fmt::Display,
     sync::{Arc, Mutex},
@@ -12,6 +13,7 @@ pub struct MemorySource {
     pub processor_context: Arc<ProcessorContext>,
     pub data: Vec<RecordBatch>,
     pub index: usize,
+    pub output: SharedDataPtr,
 }
 
 impl Display for MemorySource {
@@ -30,6 +32,7 @@ impl MemorySource {
             }),
             data,
             index: 0,
+            output: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 }
@@ -44,7 +47,19 @@ impl Processor for MemorySource {
     }
 
     fn execute(&mut self) -> Result<()> {
+        if self.index < self.data.len() {
+            let batch = self.data[self.index].clone();
+            self.output.lock().unwrap().push_back(batch);
+            self.index += 1;
+        }
+        if self.index == self.data.len() {
+            self.processor_context().set_processor_state(ProcessorState::Finished);
+        }
         Ok(())
+    }
+
+    fn output_port(&self) -> SharedDataPtr {
+        self.output.clone()
     }
 
     fn processor_context(&self) -> Arc<ProcessorContext> {
