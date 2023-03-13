@@ -1,6 +1,10 @@
 use arrow::record_batch::RecordBatch;
+use petgraph::adj::NodeIndex;
 
-use crate::{graph::Index, Result};
+use crate::{
+    graph::{Index, RunningGraph},
+    Result,
+};
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -27,39 +31,47 @@ pub enum ProcessorState {
 
 #[derive(Debug)]
 pub struct Context {
-    pub processor_state: Mutex<ProcessorState>,
-    pub prev_processors: Mutex<Vec<Arc<dyn Processor>>>,
+    pub state: Mutex<ProcessorState>,
     pub processor_type: ProcessorType,
-    // pub node_index: Index,
+    pub node_index: Mutex<Index>,
+    pub graph: Arc<Mutex<RunningGraph>>,
 }
 
 impl Context {
-    pub fn new(processor_type: ProcessorType) -> Self {
+    pub fn new(processor_type: ProcessorType, graph: Arc<Mutex<RunningGraph>>) -> Self {
         Context {
-            processor_state: Mutex::new(ProcessorState::Waiting),
-            prev_processors: Mutex::new(vec![]),
             processor_type,
+            graph,
+            node_index: Mutex::new(NodeIndex::default()),
+            state: Mutex::new(ProcessorState::Waiting),
         }
     }
 
+    pub fn set_node_index(&mut self, node_index: Index) {
+        let mut index = self.node_index.lock().unwrap();
+        *index = node_index;
+    }
+
+    pub fn get_node_index(&self) -> Index {
+        *self.node_index.lock().unwrap()
+    }
+
     pub fn set_state(&self, state: ProcessorState) {
-        let mut processor_state = self.processor_state.lock().unwrap();
+        let mut processor_state = self.state.lock().unwrap();
         *processor_state = state;
     }
 
     pub fn get_state(&self) -> ProcessorState {
-        let processor_state = self.processor_state.lock().unwrap();
+        let processor_state = self.state.lock().unwrap();
         *processor_state
     }
 
-    pub fn set_prev_processors(&self, processors: Vec<Arc<dyn Processor>>) {
-        let mut prev_processor = self.prev_processors.lock().unwrap();
-        *prev_processor = processors;
+    pub fn get_prev_processors(&self) -> Vec<Arc<dyn Processor>> {
+        self.graph.lock().unwrap().get_prev_processors(self.get_node_index())
     }
 
-    pub fn get_prev_processors(&self) -> Vec<Arc<dyn Processor>> {
-        let prev_processor = self.prev_processors.lock().unwrap();
-        prev_processor.clone()
+    pub fn get_next_processors(&self) -> Vec<Arc<dyn Processor>> {
+        self.graph.lock().unwrap().get_next_processors(self.get_node_index())
     }
 }
 
@@ -78,7 +90,7 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 #[derive(Debug)]
 pub struct EmptyProcessor {
     name: &'static str,
-    processor_context: Arc<Context>,
+    context: Arc<Context>,
     output: SharedDataPtr,
 }
 
@@ -89,14 +101,10 @@ impl Display for EmptyProcessor {
 }
 
 impl EmptyProcessor {
-    pub fn new(name: &'static str) -> Self {
+    pub fn new(name: &'static str, graph: Arc<Mutex<RunningGraph>>) -> Self {
         EmptyProcessor {
             name,
-            processor_context: Arc::new(Context {
-                processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processors: Mutex::new(vec![]),
-                processor_type: ProcessorType::Source,
-            }),
+            context: Arc::new(Context::new(ProcessorType::Source, graph)),
             output: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
@@ -108,7 +116,7 @@ impl Processor for EmptyProcessor {
     }
 
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
-        self.context().set_prev_processors(input);
+        // self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
@@ -120,6 +128,6 @@ impl Processor for EmptyProcessor {
     }
 
     fn context(&self) -> Arc<Context> {
-        self.processor_context.clone()
+        self.context.clone()
     }
 }

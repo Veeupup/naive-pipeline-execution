@@ -1,5 +1,7 @@
 use arrow::record_batch::RecordBatch;
 
+use crate::graph::Index;
+use crate::graph::RunningGraph;
 use crate::processor::*;
 use crate::Result;
 use std::collections::VecDeque;
@@ -23,13 +25,12 @@ impl Display for MemorySource {
 }
 
 impl MemorySource {
-    pub fn new(data: Vec<RecordBatch>) -> Self {
+    pub fn new(data: Vec<RecordBatch>, graph: Arc<Mutex<RunningGraph>>) -> Self {
         MemorySource {
-            processor_context: Arc::new(Context {
-                processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processors: Mutex::new(vec![]),
-                processor_type: ProcessorType::Source,
-            }),
+            processor_context: Arc::new(Context::new(
+                ProcessorType::Source,
+                graph,
+            )),
             data,
             index: 0,
             output: Arc::new(Mutex::new(VecDeque::new())),
@@ -53,8 +54,7 @@ impl Processor for MemorySource {
             self.index += 1;
         }
         if self.index == self.data.len() {
-            self.context()
-                .set_state(ProcessorState::Finished);
+            self.context().set_state(ProcessorState::Finished);
         }
         Ok(())
     }

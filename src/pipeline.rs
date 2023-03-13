@@ -110,7 +110,8 @@ impl Pipeline {
         assert!(!self.pipe_ids.is_empty());
 
         let last_ids = self.pipe_ids.last().unwrap().clone();
-        let mut merge_processor = Arc::new(MergeProcessor::new("merge_processor"));
+        let mut merge_processor =
+            Arc::new(MergeProcessor::new("merge_processor", self.graph.clone()));
 
         let merge_processor_index = self.add_processor(merge_processor.clone());
         let mut prev_processors = vec![];
@@ -208,12 +209,26 @@ mod tests {
     pub fn test_build_pipeline() {
         let mut pipeline = Pipeline::new();
 
-        pipeline.add_source(Arc::new(EmptyProcessor::new("source1")));
-        pipeline.add_source(Arc::new(EmptyProcessor::new("source2")));
-        pipeline.add_source(Arc::new(EmptyProcessor::new("source3")));
-        pipeline.add_source(Arc::new(EmptyProcessor::new("source4")));
+        pipeline.add_source(Arc::new(EmptyProcessor::new(
+            "source1",
+            pipeline.graph.clone(),
+        )));
+        pipeline.add_source(Arc::new(EmptyProcessor::new(
+            "source2",
+            pipeline.graph.clone(),
+        )));
+        pipeline.add_source(Arc::new(EmptyProcessor::new(
+            "source3",
+            pipeline.graph.clone(),
+        )));
+        pipeline.add_source(Arc::new(EmptyProcessor::new(
+            "source4",
+            pipeline.graph.clone(),
+        )));
 
-        pipeline.add_transform(|| Arc::new(EmptyProcessor::new("transform1")));
+        let graph = pipeline.graph.clone();
+        pipeline
+            .add_transform(|| Arc::new(EmptyProcessor::new("transform1", graph)));
 
         pipeline.merge_processor();
 
@@ -231,23 +246,37 @@ mod tests {
             Field::new("b", DataType::Int32, false),
         ]));
 
-        pipeline.add_source(Arc::new(MemorySource::new(vec![RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(Int32Array::from(vec![1, 2, 3])),
-                Arc::new(Int32Array::from(vec![4, 5, 6])),
-            ],
-        )?])));
+        pipeline.add_source(Arc::new(MemorySource::new(
+            vec![RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![1, 2, 3])),
+                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                ],
+            )?],
+            pipeline.graph.clone(),
+        )));
 
-        pipeline.add_source(Arc::new(MemorySource::new(vec![RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(Int32Array::from(vec![100, 110, 120])),
-                Arc::new(Int32Array::from(vec![4, 5, 6])),
-            ],
-        )?])));
+        pipeline.add_source(Arc::new(MemorySource::new(
+            vec![RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![100, 110, 120])),
+                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                ],
+            )?],
+            pipeline.graph.clone(),
+        )));
 
-        pipeline.add_transform(|| Arc::new(ArithmeticTransform::new("add", Operator::Add, 10, 0)));
+        pipeline.add_transform(|| {
+            Arc::new(ArithmeticTransform::new(
+                "add",
+                Operator::Add,
+                10,
+                0,
+                pipeline.graph.clone(),
+            ))
+        });
 
         pipeline.merge_processor();
 
