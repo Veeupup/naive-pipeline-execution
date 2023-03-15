@@ -66,7 +66,6 @@ impl Processor for ArithmeticTransform<i32> {
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         assert_eq!(input.len(), 1);
         self.input = input[0].output_port();
-        // self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
@@ -115,6 +114,9 @@ impl Processor for ArithmeticTransform<i32> {
         if prev_processor.context().get_state() == ProcessorState::Finished {
             self.context().set_state(ProcessorState::Finished);
         }
+
+        // set next processor state to Ready
+        self.set_next_processor_state(ProcessorState::Ready);
 
         Ok(())
     }

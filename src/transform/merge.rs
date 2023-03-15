@@ -73,6 +73,9 @@ impl Processor for MergeProcessor {
         // set state to finished
         self.context().set_state(ProcessorState::Finished);
 
+        // set next processor Ready
+        self.set_next_processor_state(ProcessorState::Ready);
+
         Ok(())
     }
 

@@ -27,7 +27,7 @@ pub struct Pipeline {
     // we will remember each levels pipe id to add transform for each pipe
     pipe_ids: Vec<Vec<Index>>,
 
-    // which NodeIndex is ready to execute
+    // Store the NodeIndex is ready to execute, no need to transver the graph to find the Ready node
     ready_nodes: Arc<Mutex<Vec<Index>>>,
 }
 
@@ -56,7 +56,8 @@ impl Pipeline {
         // this is where we start to execute the pipeline
         processor.context().set_state(ProcessorState::Ready);
 
-        let index = self.add_processor(processor);
+        let index = self.add_processor(processor.clone());
+        processor.context().set_node_index(index);
 
         if self.pipe_ids.is_empty() {
             self.pipe_ids.push(vec![index]);
@@ -73,14 +74,16 @@ impl Pipeline {
     ///
     /// processor3 --> processor3_1
     ///
-    pub fn add_transform(&mut self, f: impl Fn() -> Arc<dyn Processor>) {
+    pub fn add_transform(&mut self, f: impl Fn(Arc<Mutex<RunningGraph>>) -> Arc<dyn Processor>) {
         // transform processor should never be the first processor in the pipeline
         assert!(!self.pipe_ids.is_empty());
 
         let last_ids = self.pipe_ids.last().unwrap().clone();
         let mut transform_ids = vec![];
         for pipe_id in last_ids {
-            let mut processor = f();
+            let mut processor = f(self.graph.clone());
+            let index = self.add_processor(processor.clone());
+            processor.context().set_node_index(index);
             unsafe {
                 let x = Arc::get_mut_unchecked(&mut processor);
                 x.connect_from_input(vec![self
@@ -90,7 +93,6 @@ impl Pipeline {
                     .get_processor_by_index(pipe_id)]);
             }
 
-            let index = self.add_processor(processor);
             self.connect_processors(pipe_id, index);
             transform_ids.push(index);
         }
@@ -114,6 +116,9 @@ impl Pipeline {
             Arc::new(MergeProcessor::new("merge_processor", self.graph.clone()));
 
         let merge_processor_index = self.add_processor(merge_processor.clone());
+        merge_processor
+            .context()
+            .set_node_index(merge_processor_index);
         let mut prev_processors = vec![];
         for index in last_ids {
             self.connect_processors(index, merge_processor_index);
@@ -156,7 +161,7 @@ impl Pipeline {
                 match processor.context().get_state() {
                     ProcessorState::Ready => {
                         // TODO(veeupup): run the processor in a thread pool
-                        println!("execute processor: {:?})；", processor.name());
+                        println!("execute processor: {:?}", processor.name());
                         unsafe {
                             let x = Arc::get_mut_unchecked(processor);
                             x.execute()?;
@@ -227,8 +232,7 @@ mod tests {
         )));
 
         let graph = pipeline.graph.clone();
-        pipeline
-            .add_transform(|| Arc::new(EmptyProcessor::new("transform1", graph)));
+        pipeline.add_transform(|graph| Arc::new(EmptyProcessor::new("transform1", graph)));
 
         pipeline.merge_processor();
 
@@ -268,14 +272,8 @@ mod tests {
             pipeline.graph.clone(),
         )));
 
-        pipeline.add_transform(|| {
-            Arc::new(ArithmeticTransform::new(
-                "add",
-                Operator::Add,
-                10,
-                0,
-                pipeline.graph.clone(),
-            ))
+        pipeline.add_transform(|graph| {
+            Arc::new(ArithmeticTransform::new("add", Operator::Add, 10, 0, graph))
         });
 
         pipeline.merge_processor();

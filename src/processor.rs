@@ -47,7 +47,7 @@ impl Context {
         }
     }
 
-    pub fn set_node_index(&mut self, node_index: Index) {
+    pub fn set_node_index(&self, node_index: Index) {
         let mut index = self.node_index.lock().unwrap();
         *index = node_index;
     }
@@ -67,11 +67,17 @@ impl Context {
     }
 
     pub fn get_prev_processors(&self) -> Vec<Arc<dyn Processor>> {
-        self.graph.lock().unwrap().get_prev_processors(self.get_node_index())
+        self.graph
+            .lock()
+            .unwrap()
+            .get_prev_processors(self.get_node_index())
     }
 
     pub fn get_next_processors(&self) -> Vec<Arc<dyn Processor>> {
-        self.graph.lock().unwrap().get_next_processors(self.get_node_index())
+        self.graph
+            .lock()
+            .unwrap()
+            .get_next_processors(self.get_node_index())
     }
 }
 
@@ -85,6 +91,13 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
     fn output_port(&self) -> SharedDataPtr;
 
     fn context(&self) -> Arc<Context>;
+
+    fn set_next_processor_state(&self, state: ProcessorState) {
+        let next_processors = self.context().get_next_processors();
+        for processor in next_processors {
+            processor.context().set_state(state);
+        }
+    }
 }
 
 #[derive(Debug)]
