@@ -40,7 +40,7 @@ impl Processor for MemorySource {
         "MemorySource"
     }
 
-    fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
+    fn connect_from_input(&mut self, _input: Vec<Arc<dyn Processor>>) {
         panic!("MemorySource should not have input")
     }
 
@@ -54,7 +54,7 @@ impl Processor for MemorySource {
             self.context().set_state(ProcessorState::Finished);
         }
         // set next processor Ready
-        self.set_next_processor_state(ProcessorState::Ready);
+        self.set_next_processor_ready();
         Ok(())
     }
 

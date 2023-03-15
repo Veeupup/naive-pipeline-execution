@@ -116,7 +116,7 @@ impl Processor for ArithmeticTransform<i32> {
         }
 
         // set next processor state to Ready
-        self.set_next_processor_state(ProcessorState::Ready);
+        self.set_next_processor_ready();
 
         Ok(())
     }

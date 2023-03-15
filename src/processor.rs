@@ -92,10 +92,10 @@ pub trait Processor: Send + Sync + std::fmt::Debug + std::fmt::Display {
 
     fn context(&self) -> Arc<Context>;
 
-    fn set_next_processor_state(&self, state: ProcessorState) {
+    fn set_next_processor_ready(&self) {
         let next_processors = self.context().get_next_processors();
         for processor in next_processors {
-            processor.context().set_state(state);
+            processor.context().set_state(ProcessorState::Ready);
         }
     }
 }
@@ -128,7 +128,7 @@ impl Processor for EmptyProcessor {
         self.name
     }
 
-    fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
+    fn connect_from_input(&mut self, _input: Vec<Arc<dyn Processor>>) {
         // self.context().set_prev_processors(input);
     }
 

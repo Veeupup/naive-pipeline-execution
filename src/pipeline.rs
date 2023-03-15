@@ -24,6 +24,9 @@ pub struct Pipeline {
     // and then we can traverse the graph to execute the processors
     graph: Arc<Mutex<RunningGraph>>,
 
+    // Thread pool to execute the processors
+    pool: rayon::ThreadPool,
+
     // we will remember each levels pipe id to add transform for each pipe
     pipe_ids: Vec<Vec<Index>>,
 
@@ -32,11 +35,16 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new() -> Self {
+    pub fn new(threads: usize) -> Self {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
         Pipeline {
             graph: Arc::new(Mutex::new(RunningGraph::new())),
             pipe_ids: Vec::new(),
             ready_nodes: Arc::new(Mutex::new(vec![])),
+            pool,
         }
     }
 
@@ -157,15 +165,17 @@ impl Pipeline {
             // or we need to traverse the graph to find the ready nodes
             // FIXME: we should find a more efficient way to find the ready nodes
             let mut nodes_finished = 0;
-            for processor in &mut all_processors {
+            for processor in &all_processors {
                 match processor.context().get_state() {
                     ProcessorState::Ready => {
                         // TODO(veeupup): run the processor in a thread pool
                         println!("execute processor: {:?}", processor.name());
-                        unsafe {
-                            let x = Arc::get_mut_unchecked(processor);
-                            x.execute()?;
-                        }
+                        let mut processor = processor.clone();
+                        processor.context().set_state(ProcessorState::Running);
+                        self.pool.spawn(move || unsafe {
+                            let x = Arc::get_mut_unchecked(&mut processor);
+                            x.execute().unwrap()
+                        });
                     }
                     ProcessorState::Running | ProcessorState::Waiting => {}
                     ProcessorState::Finished => nodes_finished += 1,
@@ -177,10 +187,6 @@ impl Pipeline {
             if nodes_finished == all_processors.len() {
                 break;
             }
-
-            // sleep and then schedule the next round
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            println!("try to schedule");
         }
 
         let last_processor = self.graph.lock().unwrap().get_last_processor();
@@ -212,7 +218,7 @@ mod tests {
 
     #[test]
     pub fn test_build_pipeline() {
-        let mut pipeline = Pipeline::new();
+        let mut pipeline = Pipeline::new(4);
 
         pipeline.add_source(Arc::new(EmptyProcessor::new(
             "source1",
@@ -243,7 +249,7 @@ mod tests {
 
     #[test]
     pub fn test_execute_pipeline() -> Result<()> {
-        let mut pipeline = Pipeline::new();
+        let mut pipeline = Pipeline::new(2);
 
         let schema = Arc::new(Schema::new(vec![
             Field::new("a", DataType::Int32, false),

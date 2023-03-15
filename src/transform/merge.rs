@@ -59,6 +59,7 @@ impl Processor for MergeProcessor {
             .all(|x| x.context().get_state() == ProcessorState::Finished);
 
         if !finished {
+            self.context().set_state(ProcessorState::Waiting);
             return Ok(());
         }
 
@@ -66,7 +67,6 @@ impl Processor for MergeProcessor {
         let mut outputs = self.output.lock().unwrap();
         for input in &self.input {
             let mut input = input.lock().unwrap();
-            println!("MergeProcessor: input: {:?}", input);
             outputs.append(&mut input);
         }
 
@@ -74,7 +74,7 @@ impl Processor for MergeProcessor {
         self.context().set_state(ProcessorState::Finished);
 
         // set next processor Ready
-        self.set_next_processor_state(ProcessorState::Ready);
+        self.set_next_processor_ready();
 
         Ok(())
     }
