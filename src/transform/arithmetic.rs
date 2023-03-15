@@ -3,6 +3,7 @@ use arrow::array::Int32Array;
 use arrow::datatypes::Int32Type;
 use arrow::record_batch::RecordBatch;
 
+use crate::graph::RunningGraph;
 use crate::processor::*;
 use crate::Result;
 use std::collections::VecDeque;
@@ -31,14 +32,16 @@ pub struct ArithmeticTransform<T> {
 }
 
 impl<T> ArithmeticTransform<T> {
-    pub fn new(name: &'static str, operator: Operator, value: T, column_index: usize) -> Self {
+    pub fn new(
+        name: &'static str,
+        operator: Operator,
+        value: T,
+        column_index: usize,
+        graph: Arc<Mutex<RunningGraph>>,
+    ) -> Self {
         ArithmeticTransform {
             name,
-            processor_context: Arc::new(Context {
-                processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processors: Mutex::new(vec![]),
-                processor_type: ProcessorType::Transform,
-            }),
+            processor_context: Arc::new(Context::new(ProcessorType::Transform, graph)),
             operator,
             value,
             column_index,
@@ -63,7 +66,6 @@ impl Processor for ArithmeticTransform<i32> {
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         assert_eq!(input.len(), 1);
         self.input = input[0].output_port();
-        self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
@@ -110,9 +112,11 @@ impl Processor for ArithmeticTransform<i32> {
         // try to set the processor state to finished
         let prev_processor = &self.context().get_prev_processors()[0];
         if prev_processor.context().get_state() == ProcessorState::Finished {
-            self.context()
-                .set_state(ProcessorState::Finished);
+            self.context().set_state(ProcessorState::Finished);
         }
+
+        // set next processor state to Ready
+        self.set_next_processor_state(ProcessorState::Ready);
 
         Ok(())
     }

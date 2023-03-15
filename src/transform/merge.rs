@@ -1,6 +1,10 @@
 use arrow::record_batch::RecordBatch;
 
-use crate::{graph::Index, processor::*, Result};
+use crate::{
+    graph::{Index, RunningGraph},
+    processor::*,
+    Result,
+};
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -23,25 +27,17 @@ impl Display for MergeProcessor {
 }
 
 impl MergeProcessor {
-    pub fn new(name: &'static str) -> Self {
+    pub fn new(name: &'static str, graph: Arc<Mutex<RunningGraph>>) -> Self {
         MergeProcessor {
             name,
-            processor_context: Arc::new(Context {
-                // TODO(veeupup) should be judge by prev processors
-                processor_state: Mutex::new(ProcessorState::Ready),
-                prev_processors: Mutex::new(vec![]),
-                processor_type: ProcessorType::Transform,
-            }),
+            processor_context: Arc::new(Context::new(ProcessorType::Transform, graph)),
             input: vec![],
             output: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
     pub fn output(&self) -> Result<Vec<RecordBatch>> {
-        assert_eq!(
-            self.context().get_state(),
-            ProcessorState::Finished
-        );
+        assert_eq!(self.context().get_state(), ProcessorState::Finished);
         Ok(self.output.lock().unwrap().drain(..).collect())
     }
 }
@@ -53,7 +49,6 @@ impl Processor for MergeProcessor {
 
     fn connect_from_input(&mut self, input: Vec<Arc<dyn Processor>>) {
         self.input = input.iter().map(|x| x.output_port()).collect::<Vec<_>>();
-        self.context().set_prev_processors(input);
     }
 
     fn execute(&mut self) -> Result<()> {
@@ -76,8 +71,10 @@ impl Processor for MergeProcessor {
         }
 
         // set state to finished
-        self.context()
-            .set_state(ProcessorState::Finished);
+        self.context().set_state(ProcessorState::Finished);
+
+        // set next processor Ready
+        self.set_next_processor_state(ProcessorState::Ready);
 
         Ok(())
     }
