@@ -4,4 +4,4 @@ mod accumulate;
 
 pub use arithmetic::*;
 pub use merge::*;
-// pub use accumulate::*;
+pub use accumulate::*;

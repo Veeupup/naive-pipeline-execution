@@ -12,10 +12,12 @@ use crate::graph::Index;
 use crate::graph::RunningGraph;
 use crate::processor::Processor;
 use crate::processor::ProcessorState;
+use crate::transform::AccumulateProcessor;
+use crate::transform::Accumulator;
 use crate::transform::MergeProcessor;
 use crate::Result;
 use arrow::record_batch::RecordBatch;
-use petgraph::stable_graph::{NodeIndex};
+use petgraph::stable_graph::NodeIndex;
 
 #[derive(Debug)]
 pub struct Pipeline {
@@ -157,26 +159,28 @@ impl Pipeline {
     ///               /
     /// processor3 --
     ///
-    pub fn merge_processor(&mut self) {
+    pub fn merge_processor(&mut self, accumulator: Accumulator, column_index: Option<usize>) {
         assert!(!self.pipe_ids.is_empty());
 
         let last_ids = self.pipe_ids.last().unwrap().clone();
-        let mut merge_processor =
-            Arc::new(MergeProcessor::new("merge_processor", self.graph.clone()));
+        let mut acc_processor = Arc::new(AccumulateProcessor::new(
+            "acc_processor",
+            accumulator,
+            column_index,
+            self.graph.clone(),
+        ));
 
-        let merge_processor_index = self.add_processor(merge_processor.clone());
-        merge_processor
-            .context()
-            .set_node_index(merge_processor_index);
+        let acc_processor_index = self.add_processor(acc_processor.clone());
+        acc_processor.context().set_node_index(acc_processor_index);
         let mut prev_processors = vec![];
         for index in last_ids {
-            self.connect_processors(index, merge_processor_index);
+            self.connect_processors(index, acc_processor_index);
             prev_processors.push(self.graph.lock().unwrap().get_processor_by_index(index));
         }
 
         unsafe {
-            let merge_processor = Arc::get_mut_unchecked(&mut merge_processor);
-            merge_processor.connect_from_input(prev_processors);
+            let acc_processor = Arc::get_mut_unchecked(&mut acc_processor);
+            acc_processor.connect_from_input(prev_processors);
         }
     }
 
@@ -194,7 +198,6 @@ mod tests {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    
 
     use super::Pipeline;
     use crate::transform::*;
@@ -224,7 +227,7 @@ mod tests {
         let _graph = pipeline.graph.clone();
         pipeline.add_transform(|graph| Arc::new(EmptyProcessor::new("transform1", graph)));
 
-        pipeline.merge_processor();
+        pipeline.merge_processor(Accumulator::Null, None);
 
         println!("{:#?}", pipeline.graph);
 
@@ -266,24 +269,70 @@ mod tests {
             Arc::new(ArithmeticTransform::new("add", Operator::Add, 0, 1, graph))
         });
 
-        pipeline.merge_processor();
+        pipeline.merge_processor(Accumulator::Null, None);
 
         let output = pipeline.execute()?;
 
+        let new_schema = Arc::new(Schema::new(vec![Field::new("a + b", DataType::Int32, false)]));
         let expected_data = vec![
             RecordBatch::try_new(
-                schema.clone(),
-                vec![
-                    Arc::new(Int32Array::from(vec![5, 7, 9])),
-                ],
+                new_schema.clone(),
+                vec![Arc::new(Int32Array::from(vec![5, 7, 9]))],
             )?,
             RecordBatch::try_new(
-                schema,
-                vec![
-                    Arc::new(Int32Array::from(vec![500, 700, 900])),
-                ],
+                new_schema,
+                vec![Arc::new(Int32Array::from(vec![500, 700, 900]))],
             )?,
         ];
+
+        pretty_assertions::assert_eq!(output, expected_data);
+
+        Ok(())
+    }
+
+    #[test]
+    pub fn test_acc() -> Result<()> {
+        let mut pipeline = Pipeline::new(2);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("a", DataType::Int32, false),
+            Field::new("b", DataType::Int32, false),
+        ]));
+
+        pipeline.add_source(Arc::new(MemorySource::new(
+            vec![RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![1, 2, 3])),
+                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                ],
+            )?],
+            pipeline.graph.clone(),
+        )));
+
+        pipeline.add_source(Arc::new(MemorySource::new(
+            vec![RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(Int32Array::from(vec![100, 200, 300])),
+                    Arc::new(Int32Array::from(vec![400, 500, 600])),
+                ],
+            )?],
+            pipeline.graph.clone(),
+        )));
+
+        pipeline.add_transform(|graph| {
+            Arc::new(ArithmeticTransform::new("add", Operator::Add, 0, 1, graph))
+        });
+
+        pipeline.merge_processor(Accumulator::Sum, Some(0));
+
+        let output = pipeline.execute()?;
+
+        let expected_data = vec![RecordBatch::try_new(
+            Arc::new(Schema::new(vec![Field::new("sum", DataType::Int32, false)])),
+            vec![Arc::new(Int32Array::from(vec![2121]))],
+        )?];
 
         pretty_assertions::assert_eq!(output, expected_data);
 
