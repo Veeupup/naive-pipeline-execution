@@ -81,7 +81,7 @@ impl Processor for ArithmeticTransform {
 
             // For simple, we just do i32 data type
             let new_column = match rb.schema().field(self.l_column_index).data_type() {
-                Int32Type => {
+                DataType::Int32 => {
                     let l_array = l_column.as_any().downcast_ref::<Int32Array>().unwrap();
                     let r_array = r_column.as_any().downcast_ref::<Int32Array>().unwrap();
 

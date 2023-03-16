@@ -14,7 +14,7 @@ use crate::processor::Processor;
 use crate::processor::ProcessorState;
 use crate::transform::AccumulateProcessor;
 use crate::transform::Accumulator;
-use crate::transform::MergeProcessor;
+
 use crate::Result;
 use arrow::record_batch::RecordBatch;
 use petgraph::stable_graph::NodeIndex;
@@ -24,7 +24,7 @@ pub struct Pipeline {
     // DAG of processors
     // We can build a DAG of processors by adding edges to the graph
     // and then we can traverse the graph to execute the processors
-    graph: Arc<Mutex<RunningGraph>>,
+    pub graph: Arc<Mutex<RunningGraph>>,
 
     // Thread pool to execute the processors
     pool: rayon::ThreadPool,
@@ -256,7 +256,7 @@ mod tests {
 
         pipeline.add_source(Arc::new(MemorySource::new(
             vec![RecordBatch::try_new(
-                schema.clone(),
+                schema,
                 vec![
                     Arc::new(Int32Array::from(vec![100, 200, 300])),
                     Arc::new(Int32Array::from(vec![400, 500, 600])),
@@ -312,7 +312,7 @@ mod tests {
 
         pipeline.add_source(Arc::new(MemorySource::new(
             vec![RecordBatch::try_new(
-                schema.clone(),
+                schema,
                 vec![
                     Arc::new(Int32Array::from(vec![100, 200, 300])),
                     Arc::new(Int32Array::from(vec![400, 500, 600])),
