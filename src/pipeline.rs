@@ -2,7 +2,7 @@
  * Created Date: Saturday, March 11th 2023, 6:43:34 pm
  * Author: Veeupup
  *
- * Inspired by Databend, Clickhouse
+ * Inspired by Clickhouse, Databend, Morsel...
  * And this is just a toy project to implemeent a data processing pipeline
  */
 
@@ -15,7 +15,7 @@ use crate::processor::ProcessorState;
 use crate::transform::MergeProcessor;
 use crate::Result;
 use arrow::record_batch::RecordBatch;
-use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
+use petgraph::stable_graph::{NodeIndex};
 
 #[derive(Debug)]
 pub struct Pipeline {
@@ -29,9 +29,6 @@ pub struct Pipeline {
 
     // we will remember each levels pipe id to add transform for each pipe
     pipe_ids: Vec<Vec<Index>>,
-
-    // Store the NodeIndex is ready to execute, no need to transver the graph to find the Ready node
-    ready_nodes: Arc<Mutex<Vec<Index>>>,
 }
 
 impl Pipeline {
@@ -43,9 +40,53 @@ impl Pipeline {
         Pipeline {
             graph: Arc::new(Mutex::new(RunningGraph::new())),
             pipe_ids: Vec::new(),
-            ready_nodes: Arc::new(Mutex::new(vec![])),
             pool,
         }
+    }
+
+    pub fn execute(&mut self) -> Result<Vec<RecordBatch>> {
+        // check the graph is valid
+
+        // traverse the graph and execute the processors
+        // if the node state is Ready, execute it
+        // if the node state is Running or Waiting, ignore it
+        // if all node state are stopped, stop the pipeline
+        let all_processors = self.graph.lock().unwrap().get_all_processors();
+        loop {
+            // or we need to traverse the graph to find the ready nodes
+            // FIXME: we should find a more efficient way to find the ready nodes
+            let mut nodes_finished = 0;
+            for processor in &all_processors {
+                match processor.context().get_state() {
+                    ProcessorState::Ready => {
+                        let mut processor = processor.clone();
+                        processor.context().set_state(ProcessorState::Running);
+                        self.pool.spawn(move || unsafe {
+                            let x = Arc::get_mut_unchecked(&mut processor);
+                            x.execute().unwrap()
+                        });
+                    }
+                    ProcessorState::Running | ProcessorState::Waiting => {}
+                    ProcessorState::Finished => nodes_finished += 1,
+                }
+            }
+
+            // Now, all the ready nodes are finished and we should stop the pipeline
+            // break;
+            if nodes_finished == all_processors.len() {
+                break;
+            }
+        }
+
+        let last_processor = self.graph.lock().unwrap().get_last_processor();
+        let output = last_processor
+            .output_port()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+
+        Ok(output)
     }
 
     fn add_processor(&mut self, processor: Arc<dyn Processor>) -> NodeIndex {
@@ -142,63 +183,6 @@ impl Pipeline {
     pub fn expand_processor() {
         todo!()
     }
-
-    pub fn execute(&mut self) -> Result<Vec<RecordBatch>> {
-        // check the graph is valid
-
-        // traverse the graph and execute the processors
-        // if the node state is Ready, execute it
-        // if the node state is Running, ignore it
-        // if all node state are stopped, stop the pipeline
-        let mut all_processors = self.graph.lock().unwrap().get_all_processors();
-        loop {
-            // get the tasks that are ready to execute, we could avoid the scan of the graph
-            // let ready_nodes = self.ready_nodes.lock().unwrap();
-            // for node in ready_nodes.iter() {
-            //     let mut processor = self.graph.lock().unwrap().node_weight_mut(*node).unwrap();
-            //     unsafe {
-            //         let x = Arc::get_mut_unchecked(&mut processor);
-            //         x.execute()?;
-            //     }
-            // }
-
-            // or we need to traverse the graph to find the ready nodes
-            // FIXME: we should find a more efficient way to find the ready nodes
-            let mut nodes_finished = 0;
-            for processor in &all_processors {
-                match processor.context().get_state() {
-                    ProcessorState::Ready => {
-                        // TODO(veeupup): run the processor in a thread pool
-                        println!("execute processor: {:?}", processor.name());
-                        let mut processor = processor.clone();
-                        processor.context().set_state(ProcessorState::Running);
-                        self.pool.spawn(move || unsafe {
-                            let x = Arc::get_mut_unchecked(&mut processor);
-                            x.execute().unwrap()
-                        });
-                    }
-                    ProcessorState::Running | ProcessorState::Waiting => {}
-                    ProcessorState::Finished => nodes_finished += 1,
-                }
-            }
-
-            // Now, all the ready nodes are stopped and we should stop the pipeline
-            // break;
-            if nodes_finished == all_processors.len() {
-                break;
-            }
-        }
-
-        let last_processor = self.graph.lock().unwrap().get_last_processor();
-        let output = last_processor
-            .output_port()
-            .lock()
-            .unwrap()
-            .drain(..)
-            .collect();
-
-        Ok(output)
-    }
 }
 
 #[cfg(test)]
@@ -210,7 +194,7 @@ mod tests {
         datatypes::{DataType, Field, Schema},
         record_batch::RecordBatch,
     };
-    use petgraph::dot::Dot;
+    
 
     use super::Pipeline;
     use crate::transform::*;
@@ -237,7 +221,7 @@ mod tests {
             pipeline.graph.clone(),
         )));
 
-        let graph = pipeline.graph.clone();
+        let _graph = pipeline.graph.clone();
         pipeline.add_transform(|graph| Arc::new(EmptyProcessor::new("transform1", graph)));
 
         pipeline.merge_processor();

@@ -1,7 +1,7 @@
-use arrow::record_batch::RecordBatch;
+
 
 use crate::{
-    graph::{Index, RunningGraph},
+    graph::{RunningGraph},
     processor::*,
     Result,
 };
@@ -34,11 +34,6 @@ impl MergeProcessor {
             input: vec![],
             output: Arc::new(Mutex::new(VecDeque::new())),
         }
-    }
-
-    pub fn output(&self) -> Result<Vec<RecordBatch>> {
-        assert_eq!(self.context().get_state(), ProcessorState::Finished);
-        Ok(self.output.lock().unwrap().drain(..).collect())
     }
 }
 

@@ -1,6 +1,6 @@
 use arrow::array::Array;
 use arrow::array::Int32Array;
-use arrow::datatypes::Int32Type;
+
 use arrow::record_batch::RecordBatch;
 
 use crate::graph::RunningGraph;
@@ -78,7 +78,7 @@ impl Processor for ArithmeticTransform<i32> {
             // TODO(veeupup) handle the computation
             let column = rb.column(self.column_index);
             let new_column = match rb.schema().field(self.column_index).data_type() {
-                Int32Type => {
+                _Int32Type => {
                     let item = column.as_any().downcast_ref::<Int32Array>().unwrap();
                     let mut new_column_builder = Int32Array::builder(item.len());
                     for x in item {

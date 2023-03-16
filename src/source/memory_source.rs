@@ -1,6 +1,6 @@
 use arrow::record_batch::RecordBatch;
 
-use crate::graph::Index;
+
 use crate::graph::RunningGraph;
 use crate::processor::*;
 use crate::Result;

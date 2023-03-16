@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
 
 use crate::processor::Processor;
-use crate::processor::ProcessorState;
-use crate::transform::MergeProcessor;
-use crate::Result;
-use arrow::record_batch::RecordBatch;
+
+
+
+
 use petgraph::stable_graph::{DefaultIx, NodeIndex, StableDiGraph};
 use petgraph::visit::EdgeRef;
 
@@ -47,7 +47,7 @@ impl RunningGraph {
     }
 
     pub fn get_all_processors(&self) -> Vec<Arc<dyn Processor>> {
-        self.0.node_weights().map(|p| p.clone()).collect()
+        self.0.node_weights().cloned().collect()
     }
 
     // get the output processor of the pipeline
