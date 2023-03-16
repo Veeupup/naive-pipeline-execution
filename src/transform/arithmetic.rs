@@ -1,6 +1,9 @@
 use arrow::array::Array;
 use arrow::array::Int32Array;
 
+use arrow::datatypes::DataType;
+use arrow::datatypes::Field;
+use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 
 use crate::graph::RunningGraph;
@@ -19,46 +22,45 @@ pub enum Operator {
     Divide,
 }
 
-// TODO(veeupup) 计算应该在两个列之间进行，而不是和一个标量
 #[derive(Debug)]
-pub struct ArithmeticTransform<T> {
+pub struct ArithmeticTransform {
     name: &'static str,
     processor_context: Arc<Context>,
     operator: Operator,
-    value: T,
-    column_index: usize,
+    l_column_index: usize,
+    r_column_index: usize,
     input: SharedDataPtr,
     output: SharedDataPtr,
 }
 
-impl<T> ArithmeticTransform<T> {
+impl ArithmeticTransform {
     pub fn new(
         name: &'static str,
         operator: Operator,
-        value: T,
-        column_index: usize,
+        l_column_index: usize,
+        r_column_index: usize,
         graph: Arc<Mutex<RunningGraph>>,
     ) -> Self {
         ArithmeticTransform {
             name,
             processor_context: Arc::new(Context::new(ProcessorType::Transform, graph)),
             operator,
-            value,
-            column_index,
+            l_column_index,
+            r_column_index,
             input: Arc::new(Mutex::new(VecDeque::new())),
             output: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 }
 
-impl<T> Display for ArithmeticTransform<T> {
+impl Display for ArithmeticTransform {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "ArithmeticTransform [name: {}]", self.name)
     }
 }
 
 // To make it simple.. Just implement i32 data type...
-impl Processor for ArithmeticTransform<i32> {
+impl Processor for ArithmeticTransform {
     fn name(&self) -> &'static str {
         self.name
     }
@@ -72,24 +74,28 @@ impl Processor for ArithmeticTransform<i32> {
         assert_eq!(self.context().get_prev_processors().len(), 1);
 
         let mut input = self.input.lock().unwrap();
-        let mut output = self.output.lock().unwrap();
 
         for rb in input.drain(..) {
-            // TODO(veeupup) handle the computation
-            let column = rb.column(self.column_index);
-            let new_column = match rb.schema().field(self.column_index).data_type() {
-                _Int32Type => {
-                    let item = column.as_any().downcast_ref::<Int32Array>().unwrap();
-                    let mut new_column_builder = Int32Array::builder(item.len());
-                    for x in item {
-                        let value = self.value;
+            let l_column = rb.column(self.l_column_index);
+            let r_column = rb.column(self.r_column_index);
+
+            // For simple, we just do i32 data type
+            let new_column = match rb.schema().field(self.l_column_index).data_type() {
+                Int32Type => {
+                    let l_array = l_column.as_any().downcast_ref::<Int32Array>().unwrap();
+                    let r_array = r_column.as_any().downcast_ref::<Int32Array>().unwrap();
+
+                    let mut new_column_builder = Int32Array::builder(l_array.len());
+                    for i in 0..l_array.len() {
+                        let l_value = l_array.value(i);
+                        let r_value = r_array.value(i);
                         let result = match self.operator {
-                            Operator::Add => x.map(|x| x + value),
-                            Operator::Subtract => x.map(|x| x + value),
-                            Operator::Multiply => x.map(|x| x * value),
-                            Operator::Divide => x.map(|x| x / value),
+                            Operator::Add => l_value + r_value,
+                            Operator::Subtract => l_value - r_value,
+                            Operator::Multiply => l_value * r_value,
+                            Operator::Divide => l_value / r_value,
                         };
-                        new_column_builder.append_option(result);
+                        new_column_builder.append_value(result);
                     }
                     let new_column = new_column_builder.finish();
                     Arc::new(new_column)
@@ -97,16 +103,39 @@ impl Processor for ArithmeticTransform<i32> {
                 _ => todo!(),
             };
 
+            let mut fields = vec![];
             let mut columns: Vec<Arc<dyn Array>> = vec![];
+
+            let new_column_name = format!(
+                "{} {} {}",
+                rb.schema().field(self.l_column_index).name(),
+                match self.operator {
+                    Operator::Add => "+",
+                    Operator::Subtract => "-",
+                    Operator::Multiply => "*",
+                    Operator::Divide => "/",
+                },
+                rb.schema().field(self.r_column_index).name()
+            );
+            let new_field = Field::new(&new_column_name, DataType::Int32, false);
+
+            fields.push(new_field);
+            columns.push(new_column);
+
+            
+
             for (i, column) in rb.columns().iter().enumerate() {
-                if i == self.column_index {
-                    columns.push(new_column.clone());
+                if i == self.l_column_index || i == self.r_column_index {
+                    continue;
                 } else {
+                    fields.push(rb.schema().field(i).clone());
                     columns.push(column.clone());
                 }
             }
 
-            output.push_back(RecordBatch::try_new(rb.schema(), columns)?);
+            let schema = Arc::new(Schema::new(fields));
+            let mut output = self.output.lock().unwrap();
+            output.push_back(RecordBatch::try_new(schema, columns)?);
         }
 
         // try to set the processor state to finished

@@ -255,15 +255,15 @@ mod tests {
             vec![RecordBatch::try_new(
                 schema.clone(),
                 vec![
-                    Arc::new(Int32Array::from(vec![100, 110, 120])),
-                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                    Arc::new(Int32Array::from(vec![100, 200, 300])),
+                    Arc::new(Int32Array::from(vec![400, 500, 600])),
                 ],
             )?],
             pipeline.graph.clone(),
         )));
 
         pipeline.add_transform(|graph| {
-            Arc::new(ArithmeticTransform::new("add", Operator::Add, 10, 0, graph))
+            Arc::new(ArithmeticTransform::new("add", Operator::Add, 0, 1, graph))
         });
 
         pipeline.merge_processor();
@@ -274,15 +274,13 @@ mod tests {
             RecordBatch::try_new(
                 schema.clone(),
                 vec![
-                    Arc::new(Int32Array::from(vec![11, 12, 13])),
-                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                    Arc::new(Int32Array::from(vec![5, 7, 9])),
                 ],
             )?,
             RecordBatch::try_new(
                 schema,
                 vec![
-                    Arc::new(Int32Array::from(vec![110, 120, 130])),
-                    Arc::new(Int32Array::from(vec![4, 5, 6])),
+                    Arc::new(Int32Array::from(vec![500, 700, 900])),
                 ],
             )?,
         ];
