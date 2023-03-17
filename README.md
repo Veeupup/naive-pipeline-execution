@@ -5,7 +5,7 @@
 > 
 >   Just write this to help me understand how pipeline really works.
 >   
->   And I have an article on [知乎]() and [blog]() to summary pipeline.
+>   And I have an article on [知乎](https://zhuanlan.zhihu.com/p/614907875) to summary pipeline.
 
 pipeline exection demo. Inspired by Morsel, Clickhouse, databend, datafusion...
 
